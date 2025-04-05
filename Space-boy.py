@@ -268,13 +268,13 @@ class SpaceAdventureBot:
 
             response.raise_for_status()
             account['last_claim'] = time.time()
-            account['last_action'] = "🪙 جمع العملات ✓"
+            account['last_action'] = "🪙 Coin Claimed ✓"
             account['last_action_time'] = time.time()
             account['last_error'] = None
             return True
         except Exception as e:
-            account['last_action'] = "🪙 خطأ في الجمع"
-            account['last_error'] = f"خطأ جمع المكافآت: {str(e)}"
+            account['last_action'] = "🪙 Claim Failed❌"
+            account['last_error'] = f"🪙 Claim Failed❌: {str(e)}"
             return False
 
     def upgrade_boost(self, account_id, boost_id):
@@ -303,20 +303,20 @@ class SpaceAdventureBot:
             response.raise_for_status()
             
             boost_name = {
-                4: "⛏️ التعدين",
-                5: "💰 الأمتعة",
-                6: "🛢️ خزان الوقود",
-                7: "🛡️ الدرع"
-            }.get(boost_id, f"التعزيز {boost_id}")
+                4: "⛏️ Coin Mining",
+                5: "💰 Coin Capacity",
+                6: "🛢️ Tank Volume",
+                7: "🛡️ Shield"
+            }.get(boost_id, f"Boost {boost_id}")
             
-            account['last_action'] = f"🚀 {boost_name} تمت ترقيته ✓"
+            account['last_action'] = f"🚀 {boost_name} Upgraded ✓"
             account['last_action_time'] = time.time()
             account['last_upgrade'] = time.time()
             account['last_error'] = None
             return True
         except Exception as e:
-            account['last_action'] = f"🚀 خطأ في الترقية {boost_id}"
-            account['last_error'] = f"خطأ ترقية التعزيز: {str(e)}"
+            account['last_action'] = f"❌🚀 Upgrade error {boost_id}"
+            account['last_error'] = f"❌🚀 Upgrade error: {str(e)}"
             return False
 
     def check_and_upgrade(self, account_id):
@@ -438,7 +438,7 @@ class SpaceAdventureBot:
     def format_time(self, milliseconds):
         """تنسيق الوقت"""
         if milliseconds is None or milliseconds <= 0:
-            return "جاهز"
+            return "Ready"
         seconds = milliseconds / 1000
         minutes, seconds = divmod(seconds, 60)
         return f"{int(minutes):02d}:{int(seconds):02d}"
