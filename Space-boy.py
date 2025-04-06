@@ -14,10 +14,10 @@ from telegram.ext import (
     filters
 )
 
-# توكن البوت - استبدله بتوكنك
+# Bot token - replace with your token
 TOKEN = "7717260828:AAFIyiwyX_ifmmBcebYXFEdLuYXZtC_R3Go"
 
-# إعدادات اللوج
+# Logging setup
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
@@ -44,12 +44,10 @@ class SpaceAdventureBot:
         self.status_message_id = None
         self.chat_id = None
         self.running = False
-        self.update_interval = 30  # ثواني بين التحديثات
-        self.last_daily_claim_check = 0
-        self.last_reward_video_check = 0
+        self.update_interval = 30  # seconds between updates
 
     def log_action(self, message, account_id=None, level='info'):
-        """تسجيل الأحداث في اللوج"""
+        """Log actions to file and console"""
         log_msg = message
         if account_id:
             account = self.accounts.get(account_id, {})
@@ -67,7 +65,7 @@ class SpaceAdventureBot:
             print(f"{B}{R}{log_msg}{S}")
 
     def load_accounts(self):
-        """تحميل الحسابات من ملف Accounts.txt"""
+        """Load accounts from Accounts.txt file"""
         try:
             with open("Accounts.txt", "r") as f:
                 for idx, line in enumerate(f.readlines(), 1):
@@ -87,23 +85,21 @@ class SpaceAdventureBot:
                             'last_action': None,
                             'last_action_time': 0,
                             'last_upgrade': 0,
-                            'last_error': None,
-                            'last_daily_claim': 0,
-                            'last_reward_video': 0
+                            'last_error': None
                         }
-            self.log_action(f"تم تحميل {len(self.accounts)} حساب بنجاح!")
+            self.log_action(f"Successfully loaded {len(self.accounts)} accounts!")
         except FileNotFoundError:
-            self.log_action("❌ خطأ: لم يتم العثور على ملف Accounts.txt!", level='error')
+            self.log_action("❌ Error: Accounts.txt file not found!", level='error')
             raise
 
     async def send_error_notification(self, context: ContextTypes.DEFAULT_TYPE, account_id, error_msg):
-        """إرسال إشعار بالخطأ إلى المسؤول"""
+        """Send error notification to admin"""
         account = self.accounts[account_id]
         msg = (
-            f"⚠️ <b>خطأ في الحساب {account['account_number']}</b>\n"
+            f"⚠️ <b>Error in account {account['account_number']}</b>\n"
             f"🆔: <code>{account_id}</code>\n"
-            f"📛 الخطأ: <code>{error_msg}</code>\n"
-            f"⏱️ الوقت: {time.strftime('%Y-%m-%d %H:%M:%S')}"
+            f"📛 Error: <code>{error_msg}</code>\n"
+            f"⏱️ Time: {time.strftime('%Y-%m-%d %H:%M:%S')}"
         )
         await context.bot.send_message(
             chat_id=self.chat_id,
@@ -112,7 +108,7 @@ class SpaceAdventureBot:
         )
 
     def authenticate_account(self, account_id, retry=False):
-        """مصادقة الحساب"""
+        """Authenticate account"""
         account = self.accounts[account_id]
         try:
             url = f"{self.base_url}/auth/telegram"
@@ -123,7 +119,7 @@ class SpaceAdventureBot:
                 'User-Agent': 'Mozilla/5.0',
             }
 
-            self.log_action(f"جاري مصادقة الحساب...", account_id)
+            self.log_action(f"Authenticating account...", account_id)
             response = account['session'].post(url, data=data, headers=headers)
             response.raise_for_status()
             data = response.json()
@@ -133,21 +129,21 @@ class SpaceAdventureBot:
                 account['auth_id'] = account_id
                 account['failed_auth'] = 0
                 account['last_error'] = None
-                self.log_action(f"تمت المصادقة بنجاح", account_id)
+                self.log_action(f"Authentication successful", account_id)
                 return True
             else:
                 account['failed_auth'] += 1
-                account['last_error'] = "فشل المصادقة: لا يوجد توكن"
-                self.log_action(f"فشل المصادقة: لا يوجد توكن في الاستجابة", account_id, 'error')
+                account['last_error'] = "Authentication failed: No token received"
+                self.log_action(f"Authentication failed: No token in response", account_id, 'error')
                 return False
         except Exception as e:
             account['failed_auth'] += 1
-            account['last_error'] = f"خطأ المصادقة: {str(e)}"
-            self.log_action(f"فشل المصادقة: {str(e)}", account_id, 'error')
+            account['last_error'] = f"Authentication error: {str(e)}"
+            self.log_action(f"Authentication failed: {str(e)}", account_id, 'error')
             return False
 
     def get_user_data(self, account_id):
-        """جلب بيانات المستخدم"""
+        """Get user data"""
         account = self.accounts.get(account_id)
         if not account or not account['token']:
             if self.authenticate_account(account_id, retry=True):
@@ -160,11 +156,11 @@ class SpaceAdventureBot:
                 'Authorization': f"Bearer {account['token']}",
                 'X-Auth-Id': account['auth_id']
             }
-            self.log_action(f"جلب بيانات المستخدم...", account_id)
+            self.log_action(f"Fetching user data...", account_id)
             response = account['session'].get(url, headers=headers)
 
             if response.status_code == 401:
-                self.log_action(f"انتهت صلاحية التوكن، جاري إعادة المصادقة...", account_id, 'warning')
+                self.log_action(f"Token expired, re-authenticating...", account_id, 'warning')
                 if self.authenticate_account(account_id, retry=True):
                     headers['Authorization'] = f"Bearer {account['token']}"
                     response = account['session'].get(url, headers=headers)
@@ -174,15 +170,15 @@ class SpaceAdventureBot:
             response.raise_for_status()
             account['last_error'] = None
             data = response.json()
-            self.log_action(f"تم جلب بيانات المستخدم بنجاح", account_id)
+            self.log_action(f"Successfully fetched user data", account_id)
             return data
         except Exception as e:
-            account['last_error'] = f"خطأ جلب البيانات: {str(e)}"
-            self.log_action(f"فشل جلب بيانات المستخدم: {str(e)}", account_id, 'error')
+            account['last_error'] = f"Error fetching data: {str(e)}"
+            self.log_action(f"Failed to fetch user data: {str(e)}", account_id, 'error')
             return None
 
     def get_boost_data(self, account_id):
-        """جلب بيانات التعزيزات"""
+        """Get boost data"""
         account = self.accounts.get(account_id)
         if not account or not account['token']:
             return None
@@ -196,11 +192,11 @@ class SpaceAdventureBot:
                 'Authorization': f"Bearer {account['token']}",
                 'X-Auth-Id': account['auth_id']
             }
-            self.log_action(f"جلب بيانات التعزيزات...", account_id)
+            self.log_action(f"Fetching boost data...", account_id)
             response = account['session'].get(url, headers=headers)
 
             if response.status_code == 401:
-                self.log_action(f"انتهت صلاحية التوكن، جاري إعادة المصادقة...", account_id, 'warning')
+                self.log_action(f"Token expired, re-authenticating...", account_id, 'warning')
                 if self.authenticate_account(account_id, retry=True):
                     headers['Authorization'] = f"Bearer {account['token']}"
                     response = account['session'].get(url, headers=headers)
@@ -211,15 +207,15 @@ class SpaceAdventureBot:
             account['boost_data'] = response.json()
             account['last_boost_check'] = time.time()
             account['last_error'] = None
-            self.log_action(f"تم جلب بيانات التعزيزات بنجاح", account_id)
+            self.log_action(f"Successfully fetched boost data", account_id)
             return account['boost_data']
         except Exception as e:
-            account['last_error'] = f"خطأ جلب التعزيزات: {str(e)}"
-            self.log_action(f"فشل جلب بيانات التعزيزات: {str(e)}", account_id, 'error')
+            account['last_error'] = f"Error fetching boosts: {str(e)}"
+            self.log_action(f"Failed to fetch boost data: {str(e)}", account_id, 'error')
             return None
 
     def buy_boost(self, account_id, boost_id):
-        """شراء تعزيز"""
+        """Buy boost"""
         account = self.accounts.get(account_id)
         if not account or not account['token']:
             return False
@@ -234,16 +230,16 @@ class SpaceAdventureBot:
             payload = {"id": boost_id, "method": "free"}
             
             boost_name = {
-                1: "⛽ تعبئة الوقود",
-                2: "🔧 إصلاح الدرع", 
-                3: "🌀 حقل القوة"
-            }.get(boost_id, f"التعزيز {boost_id}")
+                1: "⛽ Fuel Refill",
+                2: "🔧 Shield Repair", 
+                3: "🌀 Force Field"
+            }.get(boost_id, f"Boost {boost_id}")
             
-            self.log_action(f"جاري شراء {boost_name}...", account_id)
+            self.log_action(f"Buying {boost_name}...", account_id)
             response = account['session'].post(url, headers=headers, json=payload)
 
             if response.status_code == 401:
-                self.log_action(f"انتهت صلاحية التوكن، جاري إعادة المصادقة...", account_id, 'warning')
+                self.log_action(f"Token expired, re-authenticating...", account_id, 'warning')
                 if self.authenticate_account(account_id, retry=True):
                     headers['Authorization'] = f"Bearer {account['token']}"
                     response = account['session'].post(url, headers=headers, json=payload)
@@ -252,19 +248,19 @@ class SpaceAdventureBot:
 
             response.raise_for_status()
             
-            account['last_action'] = f"{boost_name} تم ✓"
+            account['last_action'] = f"{boost_name} ✓"
             account['last_action_time'] = time.time()
             account['last_error'] = None
-            self.log_action(f"تم شراء {boost_name} بنجاح", account_id)
+            self.log_action(f"Successfully bought {boost_name}", account_id)
             return True
         except Exception as e:
-            account['last_action'] = f"خطأ في التعزيز {boost_id}"
-            account['last_error'] = f"خطأ شراء التعزيز: {str(e)}"
-            self.log_action(f"فشل شراء {boost_name}: {str(e)}", account_id, 'error')
+            account['last_action'] = f"Error in boost {boost_id}"
+            account['last_error'] = f"Boost purchase error: {str(e)}"
+            self.log_action(f"Failed to buy {boost_name}: {str(e)}", account_id, 'error')
             return False
 
     def play_roulette(self, account_id):
-        """لعب الروليت"""
+        """Play roulette"""
         account = self.accounts.get(account_id)
         if not account or not account['token']:
             return False
@@ -278,11 +274,11 @@ class SpaceAdventureBot:
             }
             payload = {"method": "free"}
             
-            self.log_action("جاري لعب الروليت...", account_id)
+            self.log_action("Playing roulette...", account_id)
             response = account['session'].post(url, headers=headers, json=payload)
 
             if response.status_code == 401:
-                self.log_action(f"انتهت صلاحية التوكن، جاري إعادة المصادقة...", account_id, 'warning')
+                self.log_action(f"Token expired, re-authenticating...", account_id, 'warning')
                 if self.authenticate_account(account_id, retry=True):
                     headers['Authorization'] = f"Bearer {account['token']}"
                     response = account['session'].post(url, headers=headers, json=payload)
@@ -290,19 +286,19 @@ class SpaceAdventureBot:
                     return False
 
             response.raise_for_status()
-            account['last_action'] = "🎰 لعب الروليت ✓"
+            account['last_action'] = "🎰 Roulette ✓"
             account['last_action_time'] = time.time()
             account['last_error'] = None
-            self.log_action("تم لعب الروليت بنجاح", account_id)
+            self.log_action("Successfully played roulette", account_id)
             return True
         except Exception as e:
-            account['last_action'] = "🎰 خطأ في الروليت"
-            account['last_error'] = f"خطأ لعب الروليت: {str(e)}"
-            self.log_action(f"فشل لعب الروليت: {str(e)}", account_id, 'error')
+            account['last_action'] = "🎰 Roulette error"
+            account['last_error'] = f"Roulette error: {str(e)}"
+            self.log_action(f"Failed to play roulette: {str(e)}", account_id, 'error')
             return False
 
     def claim_rewards(self, account_id):
-        """جمع المكافآت"""
+        """Claim rewards"""
         account = self.accounts.get(account_id)
         if not account or not account['token']:
             return False
@@ -313,11 +309,11 @@ class SpaceAdventureBot:
                 'Authorization': f"Bearer {account['token']}",
                 'X-Auth-Id': account['auth_id']
             }
-            self.log_action("جاري جمع المكافآت...", account_id)
+            self.log_action("Claiming rewards...", account_id)
             response = account['session'].post(url, headers=headers)
 
             if response.status_code == 401:
-                self.log_action(f"انتهت صلاحية التوكن، جاري إعادة المصادقة...", account_id, 'warning')
+                self.log_action(f"Token expired, re-authenticating...", account_id, 'warning')
                 if self.authenticate_account(account_id, retry=True):
                     headers['Authorization'] = f"Bearer {account['token']}"
                     response = account['session'].post(url, headers=headers)
@@ -329,108 +325,22 @@ class SpaceAdventureBot:
             account['last_action'] = "🪙 Coin Claimed ✓"
             account['last_action_time'] = time.time()
             account['last_error'] = None
-            self.log_action("تم جمع المكافآت بنجاح", account_id)
+            self.log_action("Successfully claimed rewards", account_id)
             return True
         except Exception as e:
             account['last_action'] = "🪙 Claim Failed❌"
             account['last_error'] = f"🪙 Claim Failed❌: {str(e)}"
-            self.log_action(f"فشل جمع المكافآت: {str(e)}", account_id, 'error')
-            return False
-
-    def claim_daily_reward(self, account_id):
-        """جمع المكافأة اليومية"""
-        account = self.accounts.get(account_id)
-        if not account or not account['token']:
-            return False
-
-        try:
-            url = f"{self.base_url}/dayli/claim_activity/"
-            headers = {
-                'Authorization': f"Bearer {account['token']}",
-                'X-Auth-Id': account['auth_id']
-            }
-            self.log_action("جاري جمع المكافأة اليومية...", account_id)
-            response = account['session'].post(url, headers=headers)
-
-            if response.status_code == 401:
-                self.log_action(f"انتهت صلاحية التوكن، جاري إعادة المصادقة...", account_id, 'warning')
-                if self.authenticate_account(account_id, retry=True):
-                    headers['Authorization'] = f"Bearer {account['token']}"
-                    response = account['session'].post(url, headers=headers)
-                else:
-                    return False
-
-            response.raise_for_status()
-            account['last_daily_claim'] = time.time()
-            account['last_action'] = "🎁 Daily Reward Claimed ✓"
-            account['last_action_time'] = time.time()
-            account['last_error'] = None
-            self.log_action("تم جمع المكافأة اليومية بنجاح", account_id)
-            return True
-        except Exception as e:
-            account['last_action'] = "🎁 Daily Claim Failed❌"
-            account['last_error'] = f"🎁 Daily Claim Failed❌: {str(e)}"
-            self.log_action(f"فشل جمع المكافأة اليومية: {str(e)}", account_id, 'error')
-            return False
-
-    def claim_reward_video(self, account_id):
-        """جمع مكافأة الفيديو"""
-        account = self.accounts.get(account_id)
-        if not account or not account['token']:
-            return False
-
-        try:
-            url = f"{self.base_url}/tasks/reward-video/"
-            headers = {
-                'Authorization': f"Bearer {account['token']}",
-                'X-Auth-Id': account['auth_id']
-            }
-            
-            # إرسال 3 طلبات كما هو مطلوب
-            self.log_action("جاري جمع مكافأة الفيديو (1/3)...", account_id)
-            response1 = account['session'].put(url, headers=headers)
-            response1.raise_for_status()
-            data1 = response1.json()
-            
-            if data1.get('event') != 'watch' or data1.get('count') != 1:
-                raise Exception("Invalid response for first request")
-            
-            self.log_action("جاري جمع مكافأة الفيديو (2/3)...", account_id)
-            response2 = account['session'].put(url, headers=headers)
-            response2.raise_for_status()
-            data2 = response2.json()
-            
-            if data2.get('event') != 'watch' or data2.get('count') != 2:
-                raise Exception("Invalid response for second request")
-            
-            self.log_action("جاري جمع مكافأة الفيديو (3/3)...", account_id)
-            response3 = account['session'].put(url, headers=headers)
-            response3.raise_for_status()
-            data3 = response3.json()
-            
-            if data3.get('event') != 'reward' or data3.get('count') != 0:
-                raise Exception("Invalid response for third request")
-            
-            account['last_reward_video'] = time.time()
-            account['last_action'] = "🎥 Video Reward Claimed ✓"
-            account['last_action_time'] = time.time()
-            account['last_error'] = None
-            self.log_action("تم جمع مكافأة الفيديو بنجاح", account_id)
-            return True
-        except Exception as e:
-            account['last_action'] = "🎥 Video Claim Failed❌"
-            account['last_error'] = f"🎥 Video Claim Failed❌: {str(e)}"
-            self.log_action(f"فشل جمع مكافأة الفيديو: {str(e)}", account_id, 'error')
+            self.log_action(f"Failed to claim rewards: {str(e)}", account_id, 'error')
             return False
 
     def upgrade_boost(self, account_id, boost_id):
-        """ترقية التعزيز"""
+        """Upgrade boost"""
         account = self.accounts.get(account_id)
         if not account or not account['token']:
             return False
 
         try:
-            # التحقق من مستوى الترقية المسموح به
+            # Check upgrade level limits
             user_data = self.get_user_data(account_id)
             if not user_data or 'user' not in user_data:
                 return False
@@ -443,10 +353,10 @@ class SpaceAdventureBot:
                 7: user.get('level_shield', 1)
             }.get(boost_id, 1)
             
-            # تحديد الحد الأقصى للترقية حسب boost_id
+            # Set max level based on boost_id
             max_level = 6 if boost_id == 4 else 5
             if current_level >= max_level:
-                self.log_action(f"لا يمكن ترقية التعزيز {boost_id} أكثر من المستوى {max_level}", account_id, 'warning')
+                self.log_action(f"Cannot upgrade boost {boost_id} beyond level {max_level}", account_id, 'warning')
                 return False
 
             url = f"{self.base_url}/boost/buy/"
@@ -464,11 +374,11 @@ class SpaceAdventureBot:
                 7: "🛡️ Shield"
             }.get(boost_id, f"Boost {boost_id}")
             
-            self.log_action(f"جاري ترقية {boost_name}...", account_id)
+            self.log_action(f"Upgrading {boost_name}...", account_id)
             response = account['session'].post(url, headers=headers, json=payload)
 
             if response.status_code == 401:
-                self.log_action(f"انتهت صلاحية التوكن، جاري إعادة المصادقة...", account_id, 'warning')
+                self.log_action(f"Token expired, re-authenticating...", account_id, 'warning')
                 if self.authenticate_account(account_id, retry=True):
                     headers['Authorization'] = f"Bearer {account['token']}"
                     response = account['session'].post(url, headers=headers, json=payload)
@@ -481,16 +391,16 @@ class SpaceAdventureBot:
             account['last_action_time'] = time.time()
             account['last_upgrade'] = time.time()
             account['last_error'] = None
-            self.log_action(f"تم ترقية {boost_name} بنجاح", account_id)
+            self.log_action(f"Successfully upgraded {boost_name}", account_id)
             return True
         except Exception as e:
             account['last_action'] = f"❌🚀 Upgrade error {boost_id}"
             account['last_error'] = f"❌🚀 Upgrade error: {str(e)}"
-            self.log_action(f"فشل ترقية التعزيز {boost_id}: {str(e)}", account_id, 'error')
+            self.log_action(f"Failed to upgrade boost {boost_id}: {str(e)}", account_id, 'error')
             return False
 
     def check_and_upgrade(self, account_id):
-        """التحقق وترقية التعزيزات"""
+        """Check and upgrade boosts"""
         account = self.accounts.get(account_id)
         if not account or not account['token']:
             return False
@@ -543,7 +453,7 @@ class SpaceAdventureBot:
         return False
 
     def get_upgrade_price(self, boost_data, boost_id, current_level):
-        """الحصول على سعر الترقية"""
+        """Get upgrade price"""
         if not boost_data or 'list' not in boost_data:
             return None
             
@@ -557,17 +467,33 @@ class SpaceAdventureBot:
         return None
 
     def check_boost_availability(self, account_id, user_data):
-        """التحقق من توفر التعزيزات"""
+        """Check boost availability with null checks"""
         if not user_data or 'user' not in user_data:
             return {}
 
         user = user_data['user']
         current_time = user.get('locale_time', int(time.time() * 1000))
         
-        fuel_ready = user.get('fuel_free_at') is None or user['fuel_free_at'] <= current_time
-        shield_ready = (user.get('shield_free_at') is None or user['shield_free_at'] <= current_time) and user.get('shield_damage', 0) != 0
-        field_ready = user.get('shield_free_immunity_at') is None or user['shield_free_immunity_at'] <= current_time
-        roulette_ready = user.get('spin_after_at') is None or user['spin_after_at'] <= current_time
+        # Handle null values and set defaults
+        fuel_free_at = user.get('fuel_free_at', 0)
+        shield_free_at = user.get('shield_free_at', 0)
+        shield_free_immunity_at = user.get('shield_free_immunity_at', 0)
+        spin_after_at = user.get('spin_after_at', 0)
+        
+        # Verify all values are numeric
+        if not all(isinstance(x, (int, float)) for x in [current_time, fuel_free_at, shield_free_at, shield_free_immunity_at, spin_after_at]):
+            self.log_action("Invalid time values for boost check", account_id, 'warning')
+            return {
+                'fuel_ready': False,
+                'shield_ready': False,
+                'field_ready': False,
+                'roulette_ready': False,
+            }
+        
+        fuel_ready = fuel_free_at <= current_time
+        shield_ready = shield_free_at <= current_time and user.get('shield_damage', 0) != 0
+        field_ready = shield_free_immunity_at <= current_time
+        roulette_ready = spin_after_at <= current_time
 
         return {
             'fuel_ready': fuel_ready,
@@ -576,42 +502,17 @@ class SpaceAdventureBot:
             'roulette_ready': roulette_ready,
         }
 
-    def check_daily_claim(self, account_id, user_data):
-        """التحقق من المكافأة اليومية"""
-        if not user_data or 'user' not in user_data:
-            return False
-            
-        user = user_data['user']
-        current_time = user.get('locale_time', int(time.time() * 1000))
-        daily_next_at = user.get('daily_next_at', 0)
-        
-        # إذا كان الوقت الحالي أكبر من وقت المكافأة التالية أو لم يتم المطالبة بها اليوم
-        if current_time >= daily_next_at or time.time() - self.accounts[account_id]['last_daily_claim'] >= 86400:
-            return True
-        return False
-
-    def check_reward_video(self, account_id):
-        """التحقق من مكافأة الفيديو"""
-        # كل ساعتين (7200 ثانية)
-        if time.time() - self.accounts[account_id]['last_reward_video'] >= 7200:
-            return True
-        return False
+    def safe_time_diff(self, future_time, current_time):
+        """Calculate time difference safely with null checks"""
+        if future_time is None or current_time is None:
+            return 0  # Return 0 instead of None to avoid comparison errors
+        return max(0, future_time - current_time)  # Ensure result is not negative
 
     def check_and_act(self, account_id):
-        """التحقق وتنفيذ الإجراءات"""
+        """Check and perform actions"""
         user_data = self.get_user_data(account_id)
         if not user_data:
             return
-
-        # التحقق من المكافأة اليومية
-        if self.check_daily_claim(account_id, user_data):
-            if self.claim_daily_reward(account_id):
-                return
-
-        # التحقق من مكافأة الفيديو
-        if self.check_reward_video(account_id):
-            if self.claim_reward_video(account_id):
-                return
 
         if self.check_and_upgrade(account_id):
             return
@@ -637,7 +538,7 @@ class SpaceAdventureBot:
                 action_performed = True
 
     def format_time(self, milliseconds):
-        """تنسيق الوقت"""
+        """Format time"""
         if milliseconds is None or milliseconds <= 0:
             return "Ready"
         seconds = milliseconds / 1000
@@ -645,13 +546,13 @@ class SpaceAdventureBot:
         return f"{int(minutes):02d}:{int(seconds):02d}"
 
     def format_number(self, num):
-        """تنسيق الأرقام"""
+        """Format numbers"""
         if isinstance(num, str):
             return num
         return "{:,}".format(num)
 
     async def generate_status_message(self):
-        """إنشاء رسالة الحالة"""
+        """Generate status message"""
         message = "⌯ <b>Space Adventure Bot 🚀</b>\n"
         message += "━━━━━━━━━━━━━━━━━━━━\n\n"
         
@@ -663,13 +564,13 @@ class SpaceAdventureBot:
             user = user_data['user']
             current_time = user.get('locale_time', int(time.time() * 1000))
             
-            # حساب الأوقات المتبقية
+            # Calculate remaining times
             fuel_remaining = self.safe_time_diff(user.get('fuel_free_at'), current_time)
             shield_remaining = self.safe_time_diff(user.get('shield_free_at'), current_time)
             field_remaining = self.safe_time_diff(user.get('shield_free_immunity_at'), current_time)
             roulette_remaining = self.safe_time_diff(user.get('spin_after_at'), current_time)
             
-            # بناء رسالة الحساب
+            # Build account message
             message += f"➥ <b>ACCOUNT [ {account['account_number']} ] 🚀</b>\n"
             message += "━━━━━━━━━━━━━━━━━━━━\n"
             message += f"➥ 🟡 <b>Coins:</b> {self.format_number(user.get('balance', 0))}   💎 <b>Gems:</b> {user.get('gems', 0)}\n"
@@ -680,7 +581,7 @@ class SpaceAdventureBot:
             message += f"➥ [ 🎰{self.format_time(roulette_remaining)} ] [ ⛽{self.format_time(fuel_remaining)} ]\n"
             message += f"➥ [ 🔧{self.format_time(shield_remaining)} ] [ 🌀{self.format_time(field_remaining)} ]\n"
             
-            # إظهار آخر إجراء أو خطأ
+            # Show last action or error
             if account['last_error']:
                 message += "━━━━━━━━━━━━━━━━━━━━\n"
                 message += f"➥ ❌ <code>{account['last_error']}</code>\n"
@@ -690,19 +591,13 @@ class SpaceAdventureBot:
             
             message += "━━━━━━━━━━━━━━━━━━━━\n\n"
         
-        # إضافة وقت التحديث الأخير
+        # Add last update time
         message += f"🔄 <i>Last updated: {time.strftime('%Y-%m-%d %H:%M:%S')}</i>"
         
         return message
 
-    def safe_time_diff(self, future_time, current_time):
-        """حساب الفارق الزمني بأمان"""
-        if future_time is None or current_time is None:
-            return None
-        return future_time - current_time
-
     async def update_status_message(self, context: ContextTypes.DEFAULT_TYPE):
-        """تحديث رسالة الحالة"""
+        """Update status message"""
         if not self.status_message_id or not self.chat_id:
             return
             
@@ -715,10 +610,10 @@ class SpaceAdventureBot:
                 parse_mode='HTML'
             )
         except Exception as e:
-            self.log_action(f"خطأ في تحديث رسالة الحالة: {e}", level='error')
+            self.log_action(f"Error updating status message: {e}", level='error')
 
     async def run_accounts_loop(self, context: ContextTypes.DEFAULT_TYPE):
-        """حلقة تشغيل الحسابات"""
+        """Main accounts loop"""
         while self.running:
             start_time = time.time()
             
@@ -727,7 +622,7 @@ class SpaceAdventureBot:
                     try:
                         self.check_and_act(account_id)
                     except Exception as e:
-                        self.log_action(f"خطأ في الحساب: {e}", account_id, 'error')
+                        self.log_action(f"Account error: {e}", account_id, 'error')
                         await self.send_error_notification(context, account_id, str(e))
                         
                 await self.update_status_message(context)
@@ -737,15 +632,15 @@ class SpaceAdventureBot:
             time.sleep(sleep_time)
 
     async def start_bot(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        """بدء تشغيل البوت"""
+        """Start bot command"""
         if self.running:
-            await update.message.reply_text("✅ البوت يعمل بالفعل!")
+            await update.message.reply_text("✅ Bot is already running!")
             return
             
         self.running = True
         self.chat_id = update.effective_chat.id
         
-        # إرسال رسالة الحالة الأولى
+        # Send initial status message
         message = await self.generate_status_message()
         sent_message = await context.bot.send_message(
             chat_id=self.chat_id,
@@ -754,63 +649,63 @@ class SpaceAdventureBot:
         )
         self.status_message_id = sent_message.message_id
         
-        # بدء حلقة التشغيل في خلفية
+        # Start background loop
         threading.Thread(
             target=lambda: asyncio.run(self.run_accounts_loop(context)),
             daemon=True
         ).start()
         
-        await update.message.reply_text("🚀 بدأ تشغيل البوت بنجاح!")
+        await update.message.reply_text("🚀 Bot started successfully!")
 
     async def stop_bot(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        """إيقاف البوت"""
+        """Stop bot command"""
         if not self.running:
-            await update.message.reply_text("🛑 البوت متوقف بالفعل!")
+            await update.message.reply_text("🛑 Bot is already stopped!")
             return
             
         self.running = False
-        await update.message.reply_text("🛑 تم إيقاف البوت بنجاح!")
+        await update.message.reply_text("🛑 Bot stopped successfully!")
 
     async def update_now(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        """تحديث الحالة الآن"""
+        """Force update command"""
         if not self.running:
-            await update.message.reply_text("⚠️ البوت متوقف. يرجى تشغيله أولاً!")
+            await update.message.reply_text("⚠️ Bot is stopped. Please start it first!")
             return
             
         with self.lock:
             await self.update_status_message(context)
-            await update.message.reply_text("🔄 تم تحديث الحالة الآن!")
+            await update.message.reply_text("🔄 Status updated now!")
 
     async def show_help(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        """عرض رسالة المساعدة"""
+        """Show help message"""
         help_text = (
             "🚀 <b>Space Adventure Bot - Help</b>\n\n"
-            "📌 <b>الأوامر المتاحة:</b>\n"
-            "/start - بدء تشغيل البوت\n"
-            "/stop - إيقاف البوت\n"
-            "/update - تحديث الحالة الآن\n"
-            "/help - عرض هذه الرسالة\n\n"
-            "⚙️ <b>ميزات البوت:</b>\n"
-            "- إدارة متعددة الحسابات\n"
-            "- تحديث تلقائي للحالة\n"
-            "- إشعارات فورية بالأخطاء\n"
-            "- واجهة تحكم كاملة\n\n"
-            "📂 <b>ملفات التكوين:</b>\n"
-            "يجب وضع ملف Accounts.txt في نفس المجلد"
+            "📌 <b>Available commands:</b>\n"
+            "/start - Start the bot\n"
+            "/stop - Stop the bot\n"
+            "/update - Force status update\n"
+            "/help - Show this message\n\n"
+            "⚙️ <b>Bot features:</b>\n"
+            "- Multiple account management\n"
+            "- Automatic status updates\n"
+            "- Instant error notifications\n"
+            "- Full control interface\n\n"
+            "📂 <b>Configuration files:</b>\n"
+            "Place Accounts.txt in the same folder"
         )
         await update.message.reply_text(help_text, parse_mode='HTML')
 
 def main():
-    """الدالة الرئيسية لتشغيل البوت"""
+    """Main function to run the bot"""
     print(f"{B}{C}🚀 Starting Space Adventure Telegram Bot...{S}")
     
     try:
         bot = SpaceAdventureBot()
         
-        # إنشاء تطبيق التليجرام
+        # Create Telegram application
         application = Application.builder().token(TOKEN).build()
         
-        # إضافة معالجات الأوامر
+        # Add command handlers
         application.add_handler(CommandHandler("start", bot.start_bot))
         application.add_handler(CommandHandler("stop", bot.stop_bot))
         application.add_handler(CommandHandler("update", bot.update_now))
@@ -818,7 +713,7 @@ def main():
         
         print(f"{B}{G}✅ Bot is ready!{S}")
         
-        # بدء البوت
+        # Start bot
         application.run_polling()
         
     except Exception as e:
