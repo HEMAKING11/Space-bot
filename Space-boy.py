@@ -1,5 +1,6 @@
 import os
 import time
+import random
 import threading
 import requests
 import logging
@@ -45,6 +46,7 @@ class SpaceAdventureBot:
         self.chat_id = None
         self.running = False
         self.update_interval = 30  # seconds between updates
+        self.last_reward_video_check = 0
 
     def log_action(self, message, account_id=None, level='info'):
         """Log actions to file and console"""
@@ -85,22 +87,30 @@ class SpaceAdventureBot:
                             'last_action': None,
                             'last_action_time': 0,
                             'last_upgrade': 0,
-                            'last_error': None
+                            'last_error': None,
+                            'last_daily_claim': 0,
+                            'last_reward_video': 0,
+                            'retry_delay': 5  # Initial retry delay in seconds
                         }
             self.log_action(f"Successfully loaded {len(self.accounts)} accounts!")
         except FileNotFoundError:
             self.log_action("❌ Error: Accounts.txt file not found!", level='error')
             raise
 
-    async def send_error_notification(self, context: ContextTypes.DEFAULT_TYPE, account_id, error_msg):
+    async def send_error_notification(self, context: ContextTypes.DEFAULT_TYPE, account_id, error_msg, response_text=None):
         """Send error notification to admin"""
         account = self.accounts[account_id]
         msg = (
             f"⚠️ <b>Error in account {account['account_number']}</b>\n"
             f"🆔: <code>{account_id}</code>\n"
             f"📛 Error: <code>{error_msg}</code>\n"
-            f"⏱️ Time: {time.strftime('%Y-%m-%d %H:%M:%S')}"
         )
+        
+        if response_text:
+            msg += f"📄 Response: <code>{response_text[:1000]}</code>\n"
+        
+        msg += f"⏱️ Time: {time.strftime('%Y-%m-%d %H:%M:%S')}"
+        
         await context.bot.send_message(
             chat_id=self.chat_id,
             text=msg,
@@ -108,7 +118,7 @@ class SpaceAdventureBot:
         )
 
     def authenticate_account(self, account_id, retry=False):
-        """Authenticate account"""
+        """Authenticate account with retry logic"""
         account = self.accounts[account_id]
         try:
             url = f"{self.base_url}/auth/telegram"
@@ -129,6 +139,7 @@ class SpaceAdventureBot:
                 account['auth_id'] = account_id
                 account['failed_auth'] = 0
                 account['last_error'] = None
+                account['retry_delay'] = 5  # Reset retry delay on success
                 self.log_action(f"Authentication successful", account_id)
                 return True
             else:
@@ -139,11 +150,12 @@ class SpaceAdventureBot:
         except Exception as e:
             account['failed_auth'] += 1
             account['last_error'] = f"Authentication error: {str(e)}"
+            account['retry_delay'] = min(account['retry_delay'] * 2, 300)  # Exponential backoff, max 5 minutes
             self.log_action(f"Authentication failed: {str(e)}", account_id, 'error')
             return False
 
     def get_user_data(self, account_id):
-        """Get user data"""
+        """Get user data with retry logic"""
         account = self.accounts.get(account_id)
         if not account or not account['token']:
             if self.authenticate_account(account_id, retry=True):
@@ -169,16 +181,18 @@ class SpaceAdventureBot:
 
             response.raise_for_status()
             account['last_error'] = None
+            account['retry_delay'] = 5  # Reset retry delay on success
             data = response.json()
             self.log_action(f"Successfully fetched user data", account_id)
             return data
         except Exception as e:
             account['last_error'] = f"Error fetching data: {str(e)}"
+            account['retry_delay'] = min(account['retry_delay'] * 2, 300)  # Exponential backoff
             self.log_action(f"Failed to fetch user data: {str(e)}", account_id, 'error')
             return None
 
     def get_boost_data(self, account_id):
-        """Get boost data"""
+        """Get boost data with retry logic"""
         account = self.accounts.get(account_id)
         if not account or not account['token']:
             return None
@@ -207,15 +221,17 @@ class SpaceAdventureBot:
             account['boost_data'] = response.json()
             account['last_boost_check'] = time.time()
             account['last_error'] = None
+            account['retry_delay'] = 5  # Reset retry delay on success
             self.log_action(f"Successfully fetched boost data", account_id)
             return account['boost_data']
         except Exception as e:
             account['last_error'] = f"Error fetching boosts: {str(e)}"
+            account['retry_delay'] = min(account['retry_delay'] * 2, 300)  # Exponential backoff
             self.log_action(f"Failed to fetch boost data: {str(e)}", account_id, 'error')
             return None
 
     def buy_boost(self, account_id, boost_id):
-        """Buy boost"""
+        """Buy boost with retry logic"""
         account = self.accounts.get(account_id)
         if not account or not account['token']:
             return False
@@ -236,6 +252,7 @@ class SpaceAdventureBot:
             }.get(boost_id, f"Boost {boost_id}")
             
             self.log_action(f"Buying {boost_name}...", account_id)
+            time.sleep(random.uniform(0.5, 1.5))  # Random delay to mimic human behavior
             response = account['session'].post(url, headers=headers, json=payload)
 
             if response.status_code == 401:
@@ -251,16 +268,18 @@ class SpaceAdventureBot:
             account['last_action'] = f"{boost_name} ✓"
             account['last_action_time'] = time.time()
             account['last_error'] = None
+            account['retry_delay'] = 5  # Reset retry delay on success
             self.log_action(f"Successfully bought {boost_name}", account_id)
             return True
         except Exception as e:
             account['last_action'] = f"Error in boost {boost_id}"
             account['last_error'] = f"Boost purchase error: {str(e)}"
+            account['retry_delay'] = min(account['retry_delay'] * 2, 300)  # Exponential backoff
             self.log_action(f"Failed to buy {boost_name}: {str(e)}", account_id, 'error')
             return False
 
     def play_roulette(self, account_id):
-        """Play roulette"""
+        """Play roulette with retry logic"""
         account = self.accounts.get(account_id)
         if not account or not account['token']:
             return False
@@ -275,6 +294,7 @@ class SpaceAdventureBot:
             payload = {"method": "free"}
             
             self.log_action("Playing roulette...", account_id)
+            time.sleep(random.uniform(0.5, 1.5))  # Random delay to mimic human behavior
             response = account['session'].post(url, headers=headers, json=payload)
 
             if response.status_code == 401:
@@ -289,16 +309,18 @@ class SpaceAdventureBot:
             account['last_action'] = "🎰 Roulette ✓"
             account['last_action_time'] = time.time()
             account['last_error'] = None
+            account['retry_delay'] = 5  # Reset retry delay on success
             self.log_action("Successfully played roulette", account_id)
             return True
         except Exception as e:
             account['last_action'] = "🎰 Roulette error"
             account['last_error'] = f"Roulette error: {str(e)}"
+            account['retry_delay'] = min(account['retry_delay'] * 2, 300)  # Exponential backoff
             self.log_action(f"Failed to play roulette: {str(e)}", account_id, 'error')
             return False
 
     def claim_rewards(self, account_id):
-        """Claim rewards"""
+        """Claim rewards with retry logic"""
         account = self.accounts.get(account_id)
         if not account or not account['token']:
             return False
@@ -310,6 +332,7 @@ class SpaceAdventureBot:
                 'X-Auth-Id': account['auth_id']
             }
             self.log_action("Claiming rewards...", account_id)
+            time.sleep(random.uniform(0.5, 1.5))  # Random delay to mimic human behavior
             response = account['session'].post(url, headers=headers)
 
             if response.status_code == 401:
@@ -325,16 +348,18 @@ class SpaceAdventureBot:
             account['last_action'] = "🪙 Coin Claimed ✓"
             account['last_action_time'] = time.time()
             account['last_error'] = None
+            account['retry_delay'] = 5  # Reset retry delay on success
             self.log_action("Successfully claimed rewards", account_id)
             return True
         except Exception as e:
             account['last_action'] = "🪙 Claim Failed❌"
             account['last_error'] = f"🪙 Claim Failed❌: {str(e)}"
+            account['retry_delay'] = min(account['retry_delay'] * 2, 300)  # Exponential backoff
             self.log_action(f"Failed to claim rewards: {str(e)}", account_id, 'error')
             return False
 
     def upgrade_boost(self, account_id, boost_id):
-        """Upgrade boost"""
+        """Upgrade boost with retry logic"""
         account = self.accounts.get(account_id)
         if not account or not account['token']:
             return False
@@ -375,6 +400,7 @@ class SpaceAdventureBot:
             }.get(boost_id, f"Boost {boost_id}")
             
             self.log_action(f"Upgrading {boost_name}...", account_id)
+            time.sleep(random.uniform(0.5, 1.5))  # Random delay to mimic human behavior
             response = account['session'].post(url, headers=headers, json=payload)
 
             if response.status_code == 401:
@@ -391,16 +417,18 @@ class SpaceAdventureBot:
             account['last_action_time'] = time.time()
             account['last_upgrade'] = time.time()
             account['last_error'] = None
+            account['retry_delay'] = 5  # Reset retry delay on success
             self.log_action(f"Successfully upgraded {boost_name}", account_id)
             return True
         except Exception as e:
             account['last_action'] = f"❌🚀 Upgrade error {boost_id}"
             account['last_error'] = f"❌🚀 Upgrade error: {str(e)}"
+            account['retry_delay'] = min(account['retry_delay'] * 2, 300)  # Exponential backoff
             self.log_action(f"Failed to upgrade boost {boost_id}: {str(e)}", account_id, 'error')
             return False
 
     def check_and_upgrade(self, account_id):
-        """Check and upgrade boosts"""
+        """Check and upgrade boosts with retry logic"""
         account = self.accounts.get(account_id)
         if not account or not account['token']:
             return False
@@ -502,6 +530,121 @@ class SpaceAdventureBot:
             'roulette_ready': roulette_ready,
         }
 
+    def check_daily_claim(self, account_id, user_data):
+        """Check if daily claim is available"""
+        if not user_data or 'user' not in user_data:
+            return False
+            
+        user = user_data['user']
+        current_time = user.get('locale_time', int(time.time() * 1000))
+        daily_next_at = user.get('daily_next_at', 0)
+        
+        # If current time is past next claim time or haven't claimed today
+        if current_time >= daily_next_at or time.time() - self.accounts[account_id]['last_daily_claim'] >= 86400:
+            return True
+        return False
+
+    def claim_daily_reward(self, account_id):
+        """Claim daily reward with proper sequence"""
+        account = self.accounts.get(account_id)
+        if not account or not account['token']:
+            return False
+
+        try:
+            # First request to get ads
+            get_ads_url = f"{self.base_url}/user/get_ads/"
+            headers = {
+                'Authorization': f"Bearer {account['token']}",
+                'X-Auth-Id': account['auth_id'],
+                'Content-Type': 'application/json'
+            }
+            payload = {"type": "daily_activity"}
+            
+            self.log_action("Requesting daily ads...", account_id)
+            time.sleep(random.uniform(1, 3))  # Random delay to mimic human behavior
+            ads_response = account['session'].post(get_ads_url, headers=headers, json=payload)
+            ads_response.raise_for_status()
+            
+            # Then claim the reward
+            claim_url = f"{self.base_url}/dayli/claim_activity/"
+            self.log_action("Claiming daily reward...", account_id)
+            time.sleep(random.uniform(1, 3))  # Random delay to mimic human behavior
+            claim_response = account['session'].post(claim_url, headers=headers)
+            claim_response.raise_for_status()
+            
+            account['last_daily_claim'] = time.time()
+            account['last_action'] = "🎁 Daily Reward Claimed ✓"
+            account['last_action_time'] = time.time()
+            account['last_error'] = None
+            account['retry_delay'] = 5  # Reset retry delay on success
+            self.log_action("Successfully claimed daily reward", account_id)
+            return True
+        except Exception as e:
+            account['last_action'] = "🎁 Daily Claim Failed❌"
+            account['last_error'] = f"🎁 Daily Claim Failed❌: {str(e)}"
+            account['retry_delay'] = min(account['retry_delay'] * 2, 300)  # Exponential backoff
+            self.log_action(f"Failed to claim daily reward: {str(e)}", account_id, 'error')
+            return False
+
+    def check_reward_video(self, account_id):
+        """Check if video reward is available (every 2 hours)"""
+        if time.time() - self.accounts[account_id]['last_reward_video'] >= 7200:  # 2 hours
+            return True
+        return False
+
+    def claim_reward_video(self, account_id):
+        """Claim video reward with proper sequence"""
+        account = self.accounts.get(account_id)
+        if not account or not account['token']:
+            return False
+
+        try:
+            headers = {
+                'Authorization': f"Bearer {account['token']}",
+                'X-Auth-Id': account['auth_id'],
+                'Content-Type': 'application/json'
+            }
+            
+            # We need to make 3 successful requests with ads request before each
+            for i in range(1, 4):
+                # First request ads
+                get_ads_url = f"{self.base_url}/user/get_ads/"
+                ads_payload = {"type": "tasks_reward"}
+                
+                self.log_action(f"Requesting video reward ads ({i}/3)...", account_id)
+                time.sleep(random.uniform(1, 3))  # Random delay to mimic human behavior
+                ads_response = account['session'].post(get_ads_url, headers=headers, json=ads_payload)
+                ads_response.raise_for_status()
+                
+                # Then make the video reward request
+                reward_url = f"{self.base_url}/tasks/reward-video/"
+                self.log_action(f"Claiming video reward ({i}/3)...", account_id)
+                time.sleep(random.uniform(1, 3))  # Random delay to mimic human behavior
+                reward_response = account['session'].put(reward_url, headers=headers)
+                reward_response.raise_for_status()
+                
+                data = reward_response.json()
+                
+                # Verify expected response
+                if i < 3 and (data.get('event') != 'watch' or data.get('count') != i):
+                    raise Exception(f"Unexpected response for request {i}: {data}")
+                elif i == 3 and (data.get('event') != 'reward' or data.get('count') != 0):
+                    raise Exception(f"Final reward not received: {data}")
+            
+            account['last_reward_video'] = time.time()
+            account['last_action'] = "🎥 Video Reward Claimed ✓"
+            account['last_action_time'] = time.time()
+            account['last_error'] = None
+            account['retry_delay'] = 5  # Reset retry delay on success
+            self.log_action("Successfully claimed video reward", account_id)
+            return True
+        except Exception as e:
+            account['last_action'] = "🎥 Video Claim Failed❌"
+            account['last_error'] = f"🎥 Video Claim Failed❌: {str(e)}"
+            account['retry_delay'] = min(account['retry_delay'] * 2, 300)  # Exponential backoff
+            self.log_action(f"Failed to claim video reward: {str(e)}", account_id, 'error')
+            return False
+
     def safe_time_diff(self, future_time, current_time):
         """Calculate time difference safely with null checks"""
         if future_time is None or current_time is None:
@@ -509,10 +652,20 @@ class SpaceAdventureBot:
         return max(0, future_time - current_time)  # Ensure result is not negative
 
     def check_and_act(self, account_id):
-        """Check and perform actions"""
+        """Check and perform actions with proper timing"""
         user_data = self.get_user_data(account_id)
         if not user_data:
             return
+
+        # Check daily claim
+        if self.check_daily_claim(account_id, user_data):
+            if self.claim_daily_reward(account_id):
+                return
+
+        # Check video reward (every 2 hours)
+        if self.check_reward_video(account_id):
+            if self.claim_reward_video(account_id):
+                return
 
         if self.check_and_upgrade(account_id):
             return
@@ -570,6 +723,10 @@ class SpaceAdventureBot:
             field_remaining = self.safe_time_diff(user.get('shield_free_immunity_at'), current_time)
             roulette_remaining = self.safe_time_diff(user.get('spin_after_at'), current_time)
             
+            # Calculate next daily claim time
+            daily_next_at = user.get('daily_next_at', 0)
+            daily_remaining = self.safe_time_diff(daily_next_at, current_time)
+            
             # Build account message
             message += f"➥ <b>ACCOUNT [ {account['account_number']} ] 🚀</b>\n"
             message += "━━━━━━━━━━━━━━━━━━━━\n"
@@ -580,6 +737,7 @@ class SpaceAdventureBot:
             
             message += f"➥ [ 🎰{self.format_time(roulette_remaining)} ] [ ⛽{self.format_time(fuel_remaining)} ]\n"
             message += f"➥ [ 🔧{self.format_time(shield_remaining)} ] [ 🌀{self.format_time(field_remaining)} ]\n"
+            message += f"➥ [ 🎁 Daily: {self.format_time(daily_remaining)} ]\n"
             
             # Show last action or error
             if account['last_error']:
@@ -613,17 +771,30 @@ class SpaceAdventureBot:
             self.log_action(f"Error updating status message: {e}", level='error')
 
     async def run_accounts_loop(self, context: ContextTypes.DEFAULT_TYPE):
-        """Main accounts loop"""
+        """Main accounts loop with error handling"""
         while self.running:
             start_time = time.time()
             
             with self.lock:
                 for account_id in self.accounts:
                     try:
+                        # Add random delay between accounts to mimic human behavior
+                        time.sleep(random.uniform(0.5, 2.0))
                         self.check_and_act(account_id)
                     except Exception as e:
-                        self.log_action(f"Account error: {e}", account_id, 'error')
-                        await self.send_error_notification(context, account_id, str(e))
+                        error_msg = str(e)
+                        response_text = None
+                        
+                        # Try to get response text if available
+                        if hasattr(e, 'response') and hasattr(e.response, 'text'):
+                            response_text = e.response.text
+                            self.log_action(f"Response: {response_text}", account_id, 'error')
+                        
+                        self.log_action(f"Account error: {error_msg}", account_id, 'error')
+                        await self.send_error_notification(context, account_id, error_msg, response_text)
+                        
+                        # Re-authenticate on error
+                        self.authenticate_account(account_id, retry=True)
                         
                 await self.update_status_message(context)
             
